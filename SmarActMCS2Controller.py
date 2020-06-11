@@ -1,30 +1,43 @@
 from PyTango import DeviceProxy
 
-from sardana import State, DataAccess
+#from sardana import State, DataAccess
 from sardana.pool.controller import MotorController
 from sardana.pool.controller import Type, Access, Description
 
 
-class MbiTangoMotorController(MotorController):
-    
+class SmarActMCS2Controller(MotorController):
     MaxDevice = 99
     
     axis_attributes = {
-        'Tango_Device': {
+        'Tango_Device' : {
             Type: str,
             Description: 'The Tango Device'\
                 ' (e.g. domain/family/member)',
             Access: DataAccess.ReadWrite
         },
+        'MoveMode' : {
+            Type: int,
+            Description: 'MoveMode setting'\
+                '0 = absolute, 1 = relative 2-4 = ??, higher value not valid.',
+            Access: DataAccess.ReadWrite
+        },
+        'StepFrequency' : {
+            Type: int,
+            Description: 'StepFrequency setting'\
+                'Default = 1000',
+            Access: DataAccess.ReadWrite
+        },
     }
     
     def __init__(self, inst, props, *args, **kwargs):
-        super(MbiTangoMotorController, self).__init__(
+        print('SmarAct Initialisation ...')
+        super(SmarActMCS2Controller, self).__init__(
             inst, props, *args, **kwargs)
         
         self._log.info('Initialized')
         # do some initialization
         self.axis_extra_pars = {}
+        print('SmarAct SUCCESS!')
 
     def AddDevice(self, axis):
         self._log.info('adding axis {:d}'.format(axis))
@@ -38,18 +51,25 @@ class MbiTangoMotorController(MotorController):
     def StateOne(self, axis):
         state = self.axis_extra_pars[axis]['Proxy'].command_inout("State")
         status = self.axis_extra_pars[axis]['Proxy'].command_inout("Status")
-        switch_state = MotorController.NoLimitSwitch
-        limit_plus = self.axis_extra_pars[axis]['Proxy'].read_attribute("hw_limit_plus").value
-        limit_minus = self.axis_extra_pars[axis]['Proxy'].read_attribute("hw_limit_minus").value
-        if limit_plus:
-            switch_state |= MotorController.UpperLimitSwitch
-            state = State.Alarm
-        elif limit_minus:
-            switch_state |= MotorController.LowerLimitSwitch
-            
-        if (state != State.Moving) & (limit_plus | limit_minus):
-            state = State.Alarm
-        return state, status, switch_state
+#        switch_state = MotorController.NoLimitSwitch
+#        limit_plus = False
+#        limit_minus = False
+#        if 'endstop' in status:
+#            if self.axis_extra_pars[axis]['Proxy'].read_attribute("position").value >0:
+#                limit_plus = True
+#            else:
+#                limit_minus = True
+#
+#        if limit_plus:
+#            switch_state |= MotorController.UpperLimitSwitch
+#            state = State.Alarm
+#        elif limit_minus:
+#            switch_state |= MotorController.LowerLimitSwitch
+#            
+#        if (state != State.Moving) & (limit_plus | limit_minus):
+#            state = State.Alarm
+#        return state, status, switch_state
+        return state, status
 
     def ReadOne(self, axis):
         ret = self.axis_extra_pars[axis]['Proxy'].read_attribute("position").value
@@ -67,30 +87,27 @@ class MbiTangoMotorController(MotorController):
     def SetAxisPar(self, axis, name, value):
         if self.axis_extra_pars[axis]['Proxy']:
             if name == 'velocity':
-                self.axis_extra_pars[axis]['Proxy'].write_attribute("velocity", value)
+                self.axis_extra_pars[axis]['Proxy'].write_attribute("Speed", value)
             elif name in ['acceleration', 'deceleration']:
-                self.axis_extra_pars[axis]['Proxy'].write_attribute("acceleration", value)
+                self.axis_extra_pars[axis]['Proxy'].write_attribute("Acceleration", value)
             elif name == 'step_per_unit':
-                self.axis_extra_pars[axis]['Proxy'].write_attribute("steps_per_unit", value)
+                self.axis_extra_pars[axis]['Proxy'].write_attribute("Conversion", value)
             else:
                 self._log.debug('Parameter %s is not set' % name)
 
     def GetAxisPar(self, axis, name):
         if self.axis_extra_pars[axis]['Proxy']:
             if name == 'velocity':
-                result = self.axis_extra_pars[axis]['Proxy'].read_attribute("velocity").value
+                result = self.axis_extra_pars[axis]['Proxy'].read_attribute("Speed").value
             elif name in ['acceleration', 'deceleration']:
-                result = self.axis_extra_pars[axis]['Proxy'].read_attribute("acceleration").value
+                result = self.axis_extra_pars[axis]['Proxy'].read_attribute("Acceleration").value
             elif name == 'step_per_unit':
-                result = self.axis_extra_pars[axis]['Proxy'].read_attribute("steps_per_unit").value
+                result = self.axis_extra_pars[axis]['Proxy'].read_attribute("Conversion").value
             else:
                 result = None
         else:
             result = None
         return result
-
-    def GetAxisExtraPar(self, axis, name):
-        return self.axis_extra_pars[axis][name]
     
     def SetAxisExtraPar(self, axis, name, value):
         if name == 'Tango_Device':
@@ -101,40 +118,54 @@ class MbiTangoMotorController(MotorController):
             except Exception as e:
                 self.axis_extra_pars[axis]['Proxy'] = None
                 raise e
+        elif name == 'MoveMode':
+            result = self.axis_extra_pars[axis]['Proxy'].write_attribute("MoveMode",value)
+        elif name == 'StepFrequency':
+            result = self.axis_extra_pars[axis]['Proxy'].write_attribute("StepFrequency",value)
+        else:
+            result = None
+            
+    def GetAxisExtraPar(self, axis, name):
+        
+        if name == 'MoveMode':
+            result = self.axis_extra_pars[axis]['Proxy'].read_attribute("MoveMode").value
+        elif name == 'StepFrequency':
+            result = self.axis_extra_pars[axis]['Proxy'].read_attribute("StepFrequency").value
+        else:
+            result = None
+        return result
+    
 
-    def DefinePosition(self, axis, position):
-        self.axis_extra_pars[axis]['Proxy'].command_inout("set_position", position)
-
-    def SendToCtrl(self, cmd):
-        """
-        Send custom native commands. The cmd is a space separated string
-        containing the command information. Parsing this string one gets
-        the command name and the following are the arguments for the given
-        command i.e.command_name, [arg1, arg2...]
-
-        :param cmd: string
-        :return: string (MANDATORY to avoid OMNI ORB exception)
-        """
-        # Get the process to send
-        mode = cmd.split(' ')[0].lower()
-        args = cmd.strip().split(' ')[1:]
-
-        if mode == 'homing':
-            try:
-                if len(args) == 2:
-                    axis, direction = args
-                    axis = int(axis)
-                    direction = int(direction)
-                else:
-                    raise ValueError('Invalid number of arguments')
-            except Exception as e:
-                self._log.error(e)
-
-            self._log.info('Starting homing for axis {:d} in direction id {:d}'.format(axis, direction))
-            try:
-                if direction == 0:
-                    self.axis_extra_pars[axis]['Proxy'].command_inout("homing_minus")
-                else:
-                    self.axis_extra_pars[axis]['Proxy'].command_inout("homing_plus")
-            except Exception as e:
-                self._log.error(e)
+#    def SendToCtrl(self, cmd):
+#        """
+#        Send custom native commands. The cmd is a space separated string
+#        containing the command information. Parsing this string one gets
+#        the command name and the following are the arguments for the given
+#        command i.e.command_name, [arg1, arg2...]
+#
+#        :param cmd: string
+#        :return: string (MANDATORY to avoid OMNI ORB exception)
+#        """
+#        # Get the process to send
+#        mode = cmd.split(' ')[0].lower()
+#        args = cmd.strip().split(' ')[1:]
+#
+#        if mode == 'homing':
+#            try:
+#                if len(args) == 2:
+#                    axis, direction = args
+#                    axis = int(axis)
+#                    direction = int(direction)
+#                else:
+#                    raise ValueError('Invalid number of arguments')
+#            except Exception as e:
+#                self._log.error(e)
+#
+#            self._log.info('Starting homing for axis {:d} in direction id {:d}'.format(axis, direction))
+#            try:
+#                if direction == 0:
+#                    self.axis_extra_pars[axis]['Proxy'].command_inout("homing_minus")
+#                else:
+#                    self.axis_extra_pars[axis]['Proxy'].command_inout("homing_plus")
+#            except Exception as e:
+#                self._log.error(e)
